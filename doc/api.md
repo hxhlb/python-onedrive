@@ -33,7 +33,7 @@
 
         Make synchronous HTTP request.
 
-        Can be overidden to use different http module (e.g. urllib2,
+        Can be overridden to use different http module (e.g. urllib2,
         twisted, etc).
 
 
@@ -223,7 +223,7 @@
         False will force using single-request uploads.
 
 
-    * put\_bits(path\_or\_tuple, folder\_id=None, folder\_path=None, frag\_bytes=None, raw\_id=False)
+    * put\_bits(path\_or\_tuple, folder\_id=None, folder\_path=None, frag\_bytes=None, raw\_id=False, chunk\_callback=None)
 
         Upload a file (object) using BITS API (via several http
         requests), possibly overwriting (default behavior) a file with
@@ -233,7 +233,12 @@
         folder_id) are supported here. Either folder path or id can be
         specified, but not both.
 
-        Returns id of the uploaded file, as retured by the API if
+        Passed "chunk_callback" function (if any) will be called after
+        each uploaded chunk with keyword parameters corresponding to
+        upload state and BITS session info required to resume it, if
+        necessary.
+
+        Returns id of the uploaded file, as returned by the API if
         raw_id=True is passed, otherwise in a consistent (with other
         calls) "file.{user_id}.{file_id}" format (default).
 
@@ -360,7 +365,7 @@
     * conf\_update\_keys = {'client': set(['secret', 'id']), 'request': set(['base\_headers', 'extra\_keywords', 'adapter\_settings']), 'auth': set(['access\_token', 'code', 'access\_expires', 'refresh\_token'])}
 
 
-    * classmethod from\_conf(path=None, \*\*overrides)
+    * from\_conf(path=None, \*\*overrides)
 
         Initialize instance from YAML configuration file, writing
         updates (only to keys, specified by "conf_update_keys") back to
@@ -383,6 +388,16 @@
 * **exception onedrive.api\_v5.AuthenticationError**
 
     Bases: "onedrive.api\_v5.OneDriveInteractionError"
+
+
+* **exception onedrive.api\_v5.AuthMissingError**
+
+    Bases: "onedrive.api\_v5.AuthenticationError"
+
+
+* **exception onedrive.api\_v5.APIAuthError**
+
+    Bases: "onedrive.api\_v5.AuthenticationError"
 
 
 * **exception onedrive.api\_v5.NoAPISupportError**

@@ -5,7 +5,7 @@ import itertools as it, operator as op, functools as ft
 
 from datetime import datetime, timedelta
 from posixpath import join as ujoin # used for url pahs
-from os.path import join, basename, exists
+from os.path import join, basename, dirname, exists
 import os, sys, io, urllib, urlparse, json, types, re
 
 from onedrive.conf import ConfigMixin
@@ -25,6 +25,8 @@ class ProtocolError(OneDriveInteractionError):
 		self.code = code
 
 class AuthenticationError(OneDriveInteractionError): pass
+class AuthMissingError(AuthenticationError): pass
+class APIAuthError(AuthenticationError): pass
 
 class NoAPISupportError(OneDriveInteractionError):
 	'''Request operation is known to be not supported by the OneDrive API.
@@ -99,7 +101,8 @@ class OneDriveHTTPClient(object):
 			log.warn( 'Not using request_adapter_settings, as these should not be'
 				' supported by detected requests module version: %s', requests_version )
 
-		if hasattr(sys, '_MEIPASS'): # fix cacert.pem path for running from PyInstaller bundle
+		if hasattr(sys, '_MEIPASS'):
+			# Fix cacert.pem path for running from PyInstaller bundle
 			cacert_pem = requests.certs.where()
 			if not exists(cacert_pem):
 				from pkg_resources import resource_filename
@@ -116,19 +119,42 @@ class OneDriveHTTPClient(object):
 			log.debug( 'Adjusted "requests" default ca-bundle'
 				' path (to run under PyInstaller) to: %s', cacert_pem )
 
+		if requests_version >= (2, 4, 0):
+			# Workaround for https://github.com/certifi/python-certifi/issues/26
+			import ssl
+			if ssl.OPENSSL_VERSION_INFO < (1, 0, 2):
+				try: import certifi
+				except ImportError: pass
+				else:
+					certifi_issue_url = 'https://github.com/certifi/python-certifi/issues/26'
+					if hasattr(certifi, 'old_where'): cacert_pem = certifi.old_where()
+					else:
+						cacert_pem = join(dirname(requests.certs.__file__), 'cacert.pem')
+						if not exists(cacert_pem):
+							cacert_pem = None
+							log.warn( 'Failed to find requests'
+								' certificate bundle for woraround to %s', certifi_issue_url )
+					if cacert_pem:
+						self._requests_base_keywords = (self._requests_base_keywords or dict()).copy()
+						self._requests_base_keywords.setdefault('verify', cacert_pem)
+						log.debug( 'Adjusted "requests" default ca-bundle path, to work around %s '
+							' [OpenSSL version %s, requests %s (>2.4.0) and certifi available at %r], to: %s',
+							certifi_issue_url, ssl.OPENSSL_VERSION_INFO,
+							requests_version, certifi.__file__, cacert_pem )
+
 		self._requests_setup_done = True
 		return session
 
 	def request( self, url, method='get', data=None, files=None,
 				raw=False, raw_all=False, headers=dict(), raise_for=dict(), session=None ):
 		'''Make synchronous HTTP request.
-			Can be overidden to use different http module (e.g. urllib2, twisted, etc).'''
+			Can be overridden to use different http module (e.g. urllib2, twisted, etc).'''
 		try: import requests # import here to avoid dependency on the module
-		except ImportError:
-			exc_t, exc_val, exc_tb = sys.exc_info()
-			raise ImportError, ImportError( 'Unable to find/import "requests" module.'
+		except ImportError as exc:
+			exc.args = ( 'Unable to find/import "requests" module.'
 				' Please make sure that it is installed, e.g. by running "pip install requests" command.'
-				'\nFor more info, visit: http://docs.python-requests.org/en/latest/user/install/' ), exc_tb
+				'\nFor more info, visit: http://docs.python-requests.org/en/latest/user/install/',)
+			raise exc
 
 		if not self._requests_setup_done:
 			patched_session = self._requests_setup(
@@ -226,7 +252,7 @@ class OneDriveAuth(OneDriveHTTPClient):
 
 	def auth_user_get_url(self, scope=None):
 		'Build authorization URL for User Agent.'
-		if not self.client_id: raise AuthenticationError('No client_id specified')
+		if not self.client_id: raise AuthMissingError('No client_id specified')
 		return '{}?{}'.format(self.auth_url_user, urllib.urlencode(dict(
 			client_id=self.client_id, scope=' '.join(scope or self.auth_scope),
 			response_type='code', redirect_uri=self.auth_redirect_uri )))
@@ -237,7 +263,7 @@ class OneDriveAuth(OneDriveHTTPClient):
 		url_qs = dict(it.chain.from_iterable(
 			urlparse.parse_qsl(v) for v in [url.query, url.fragment] ))
 		if url_qs.get('error'):
-			raise AuthenticationError(
+			raise APIAuthError(
 				'{} :: {}'.format(url_qs['error'], url_qs.get('error_description')) )
 		self.auth_code = url_qs['code']
 		return self.auth_code
@@ -250,7 +276,10 @@ class OneDriveAuth(OneDriveHTTPClient):
 	def _auth_token_request(self):
 		post_data = dict( client_id=self.client_id,
 			client_secret=self.client_secret, redirect_uri=self.auth_redirect_uri )
-		if not self.auth_refresh_token:
+		if not (self.auth_refresh_token or self.auth_code):
+			raise AuthMissingError( 'One of auth_refresh_token'
+				' or auth_code must be provided for authentication.' )
+		elif not self.auth_refresh_token:
 			log.debug('Requesting new access_token through authorization_code grant')
 			post_data.update(code=self.auth_code, grant_type='authorization_code')
 		else:
@@ -262,7 +291,7 @@ class OneDriveAuth(OneDriveHTTPClient):
 			k for k in ['client_id', 'client_secret', 'code', 'refresh_token', 'grant_type']
 			if k in post_data and not post_data[k] )
 		if post_data_missing_keys:
-			raise AuthenticationError( 'Insufficient authentication'
+			raise AuthMissingError( 'Insufficient authentication'
 				' data provided (missing keys: {})'.format(post_data_missing_keys) )
 		return self.request(self.auth_url_token, method='post', data=post_data)
 
@@ -312,11 +341,11 @@ class OneDriveAPIWrapper(OneDriveAuth):
 		if not pass_empty_values:
 			for k, v in query.viewitems():
 				if not v and v != 0:
-					raise AuthenticationError(
+					raise AuthMissingError(
 						'Empty key {!r} for API call (path/url: {})'.format(k, path_or_url) )
 		if re.search(r'^(https?|spdy):', path_or_url):
 			if '?' in path_or_url:
-				raise AuthenticationError('URL must not include query: {}'.format(path_or_url))
+				raise AuthMissingError('URL must not include query: {}'.format(path_or_url))
 			path_or_url = path_or_url + '?{}'.format(urllib.urlencode(query))
 		else:
 			path_or_url = urlparse.urljoin(
@@ -333,6 +362,7 @@ class OneDriveAPIWrapper(OneDriveAuth):
 		name, src = (basename(path_or_tuple), open(path_or_tuple, 'rb'))\
 			if isinstance(path_or_tuple, types.StringTypes)\
 			else (path_or_tuple[0], path_or_tuple[1])
+		if isinstance(src, types.StringTypes): src = io.BytesIO(src)
 		return name, src
 
 	def _translate_api_flag(self, val, name=None, special_vals=None):
@@ -356,11 +386,11 @@ class OneDriveAPIWrapper(OneDriveAuth):
 			request_kwz.setdefault('headers', dict())['Authorization'] =\
 				'Bearer {}'.format(self.auth_access_token)
 		kwz = request_kwz.copy()
-		kwz.setdefault('raise_for', dict())[401] = AuthenticationError
+		kwz.setdefault('raise_for', dict())[401] = APIAuthError
 		api_url = ft.partial( self._api_url,
 			url, query, pass_access_token=not auth_header )
 		try: return self.request(api_url(), **kwz)
-		except AuthenticationError:
+		except APIAuthError:
 			if not auto_refresh_token: raise
 			self.auth_get_token()
 			if auth_header: # update auth header with a new token
@@ -453,14 +483,19 @@ class OneDriveAPIWrapper(OneDriveAuth):
 			data=src, method='put', auth_header=True )
 
 	def put_bits( self, path_or_tuple,
-			folder_id=None, folder_path=None, frag_bytes=None, raw_id=False ):
+			folder_id=None, folder_path=None, frag_bytes=None,
+			raw_id=False, chunk_callback=None ):
 		'''Upload a file (object) using BITS API (via several http requests), possibly
 				overwriting (default behavior) a file with the same "name" attribute, if it exists.
 
 			Unlike "put" method, uploads to "folder_path" (instead of folder_id) are
 				supported here. Either folder path or id can be specified, but not both.
 
-			Returns id of the uploaded file, as retured by the API
+			Passed "chunk_callback" function (if any) will be called after each
+				uploaded chunk with keyword parameters corresponding to
+				upload state and BITS session info required to resume it, if necessary.
+
+			Returns id of the uploaded file, as returned by the API
 				if raw_id=True is passed, otherwise in a consistent (with other calls)
 				"file.{user_id}.{file_id}" format (default).'''
 		# XXX: overwrite/downsize are not documented/supported here (yet?)
@@ -500,10 +535,11 @@ class OneDriveAPIWrapper(OneDriveAuth):
 		h = lambda k,hs=dict((k.lower(), v) for k,v in headers.viewitems()): hs.get(k, '')
 		checks = [ code == 201,
 			h('bits-packet-type').lower() == 'ack',
-			h('bits-protocol').lower() == self.api_bits_protocol_id.lower() ]
+			h('bits-protocol').lower() == self.api_bits_protocol_id.lower(),
+			h('bits-session-id') ]
 		if not all(checks):
 			raise ProtocolError(code, 'Invalid BITS Create-Session response', headers, body, checks)
-		bits_sid = headers['bits-session-id']
+		bits_sid = h('bits-session-id')
 
 		src.seek(0, os.SEEK_END)
 		c, src_len = 0, src.tell()
@@ -523,6 +559,12 @@ class OneDriveAPIWrapper(OneDriveAuth):
 					'BITS-Session-Id': bits_sid,
 					'Content-Range': 'bytes {}-{}/{}'.format(c, min(c1, src_len)-1, src_len) })
 			c = c1
+
+			if chunk_callback:
+				chunk_callback(
+					bytes_transferred=c, bytes_total=src_len,
+					chunks_transferred=n, chunks_total=cn,
+					bits_session_id=bits_sid )
 
 		if self.api_bits_auth_refresh_before_commit_hack:
 			# As per #39 and comments under the gist with the spec,

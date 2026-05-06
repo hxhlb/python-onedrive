@@ -1,10 +1,10 @@
 python-onedrive
 ----------------------------------------
 
-**Compatibility note:** if setup.py, requirements.txt and/or package depends on
-"skydrive.api_v5" module from python-skydrive (pre-rename, now it's
-"onedrive.api_v5"), "python-onedrive==14.04.0" package (with old API) can be
-used in its place - i.e. just replace any "python-skydrive" pkg-spec with that.
+**Deprecation Warning:**
+this module is completely obsoleted by official
+[onedrive-sdk-python](https://github.com/OneDrive/onedrive-sdk-python),
+for all new projects please use that instead.
 
 Python and command-line interface for
 [old SkyDrive/OneDrive REST API](http://msdn.microsoft.com/library/dn659752.aspx).
@@ -24,10 +24,8 @@ This package similarly renamed from python-skydrive to python-onedrive.
 
 As mentioned, only old "apis.live.net/v5.0" (SkyDrive) API (and BITS API for
 large files) are used here.
-Since 24 Feb 2015, there is new "api.onedrive.com/v1.0" API
-([on github!](https://onedrive.github.io/)), as helpfully pointed out in
-[issue-52](https://github.com/mk-fg/python-onedrive/issues/52),
-which is not (yet?) supported in any way here.
+Since 24 Feb 2015, there is new "api.onedrive.com/v1.0" API, which has an
+official python sdk - [onedrive-sdk-python](https://github.com/OneDrive/onedrive-sdk-python).
 
 Be sure to read "Known Issues and Limitations" section below before use, to
 avoid any potentially nasty surprises.
@@ -140,10 +138,9 @@ Known Issues and Limitations
 	["api.onedrive.com/v1.0" API](https://onedrive.github.io/),
 	which allows to do a lot more than the old one.
 
-	This is not (yet?) supported in any way, and basically needs a new module for
-	it, which might be available elsewhere.
-
-	See also [issue-52](https://github.com/mk-fg/python-onedrive/issues/52).
+	This is not supported here in any way, but since 2015-10-09 is supported by
+	the official [onedrive-sdk-python](https://github.com/OneDrive/onedrive-sdk-python)
+	module, which should probably be used for all new projects instead of this one.
 
 * Uploading of files larger than ~100 MiB via single POST/PUT request is
 	apparently not supported by OneDrive API - see
@@ -271,6 +268,12 @@ for real-world API usage examples.
 Installation
 ----------------------------------------
 
+In case you've missed Deprecation Notice at the start of this file:
+
+* **DO NOT USE** this project for anything new, use official
+	[onedrive-sdk-python](https://github.com/OneDrive/onedrive-sdk-python)
+	instead.
+
 It's a regular package for Python 2.7 (not 3.X).
 
 Using [pip](http://pip-installer.org/) is the best way:
@@ -345,7 +348,7 @@ without any installation, if that's the only thing you need there.
 
 * (optional) [chardet](http://pypi.python.org/pypi/chardet) - only used to
 	detect encoding (utf-8, gbk, koi8-r, etc) of the command-line arguments to
-	support workng with non-ascii (e.g. cyrillic, chinese) names, if explicitly
+	support working with non-ascii (e.g. cyrillic, chinese) names, if explicitly
 	requested.
 
 	Not needed unless you specifically use cli tool with "--encoding detect"
@@ -364,10 +367,10 @@ It's quite a conventional REST API with JSON encoding of structured data, like
 pretty much every other trendy modern API, say, github.
 
 Authentication is ["OAuth 2.0"](http://msdn.microsoft.com/en-us/library/dn659750.aspx),
-which is quite ambigous all by itself, and especially when being implemented by
+which is quite ambiguous all by itself, and especially when being implemented by
 well-known for it's proprietary "cripple-everything-else" extension creep
 Microsoft.
-It has a twist in authrization_code grant flow for "mobile" apps, where bearer
+It has a twist in authorization_code grant flow for "mobile" apps, where bearer
 token refresh can be performed without having to provide client_secret. Client
 app must be marked as "mobile" in
 [DevCenter](https://account.live.com/developers/applications/create)
@@ -460,3 +463,8 @@ More details/discussion on this API can be found in
 and [this github gist](https://gist.github.com/rgregg/37ba8929768a62131e85).
 As of now (2014-11-21), this is "preliminary documentation and is subject to
 change".
+
+Since 24 Feb 2015, there is new "api.onedrive.com/v1.0" API available,
+and eventually (2015-10-09) got an official python sdk -
+[onedrive-sdk-python](https://github.com/OneDrive/onedrive-sdk-python) -
+which is probably the best option for any new python project.
